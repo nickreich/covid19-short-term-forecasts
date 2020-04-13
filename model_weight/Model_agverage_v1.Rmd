@@ -21,23 +21,40 @@ opts_chunk$set(fig.path='figs/', fig.keep='high',
 
 ```{r}
 
-d <- read.csv(file='../data/model_predictions_error.csv',stringsAsFactors = FALSE)
-d$out <- log(d$out)
+d <- read.csv(file='model_predictions_error.csv',stringsAsFactors = FALSE)
+
+country <- sort(unique(as.character(d$country)))
+# d$out <- log(d$out)
 
 d$period <- substr(x = d$model, start = 27,stop = 36)
+d$period <- as.Date(d$period,format = '%Y-%m-%d')
+d$date <- as.Date(d$date,format = '%Y-%m-%d')
+
+periods <- sort(unique((d$period)))
+
 d$model <- substr(x = d$model, start = 1,stop = 25)
 
 # add model number
 models <- unique(d$model)
 model_num <- rep(NA,nrow(d))
+period_num <- rep(NA,nrow(d))
+day_week <- rep(NA,nrow(d))
 for (i in 1:nrow(d)){
   model_num[i] <- which(models %in% d$model[i])
+  period_num[i] <- which(periods %in% (d$period[i]))
+  day_week[i] <- as.numeric(d$date[i]-d$period[i])
+  
 }
 d$model_num <- model_num
+d$period_num <- period_num
+d$day_week <- day_week
+
+table(d$model_num,d$country)
 
 #serial
 f <- which(d$si %in% 'si_1')
 d1 <- d[f,]
+
 
 f <- which(d$si %in% 'si_2')
 d2 <- d[f,]
@@ -53,19 +70,181 @@ aggregate(x = d$out, by = list(d$model),sum)
 
 hist(d1$out[which(d1$model_num ==1)])
 hist(d1$out[which(d1$model_num ==2)])
+hist(d1$out[which(d1$model_num ==3)])
 
 f<-which(d1$out>5e3)
+
+table(d1$model_num,d1$country)
+f <- which(d1$country == 'Spain')
+x <- d1[f,]
+
+
 
 ```
 
 ```{r}
-weight <- seq(0,1,by = .0100)
-res <- rep(NA,length(weight))
-for (i in 1:length(weight)){
-  weights <- c(weight[i], 1-weight[i])
-  w <- weights[d1$model_num]
-  res[i] <- sum(d$out*w)
+
+aa <- aggregate(x = d$out, by = list(d$model),sum)
+dat_country <- paste0(d1$date,' - ',d1$country)
+x <- unique(paste0(d1$date,' - ',d1$country))
+
+data <- data.frame(date_country = unique(paste0(d1$date,' - ',d1$country)),
+                   date = substr(x,start = 1,stop = 10),
+                   country = substr(x,start = 14,stop = 40),
+                   week_day = rep(NA,length(x)),
+                   period = rep(NA,length(x)),
+                   matrix(NA,length(x),length(models)))
+
+for (i in 1:nrow(data)){
+  for (j in 1:length(models)){
+    f <- which( (d1$model_num == j) & (dat_country == data$date_country[i]))
+    if (length(f)>0){
+      data$week_day[i] <- d1$day_week[f]
+      data$period[i] <- d1$period_num[f]
+      data[i,j+5] <- d1$out[f]
+    }
+    
+  }
 }
-plot(weight,res)
+
+
+w <- min(aa$x) / (aa$x) 
+w <- w/sum(w)
 
 ```
+resample 
+
+```{r}
+p_sample <- c(.1,.5,.9)
+
+rep <- 1e3
+
+W <- list(W1 = data.frame(matrix(0,rep,length(models))) )
+
+layout(matrix(1:4,2,2))
+
+for (i in 1:length(p_sample)){
+  for (k in 1:rep){
+    f <-sample(nrow(data),size = round(nrow(data)*p_sample[i]),replace = FALSE)
+    x <- apply(data[f,5+(1:length(models))],2,sum)/
+      apply(!is.na(data[f,5+(1:length(models))]),2,sum)
+    W$W1[k, which(x == min(x))] <- 1
+  }
+  # layout(matrix(1:4,2,2))
+  plot(apply(W$W1,2,cumsum)[,1]/c(1:rep),ylim=c(0,1),type='l',col='black',main=p_sample[i])
+  lines(apply(W$W1,2,cumsum)[,2]/c(1:rep),col='red')
+  lines(apply(W$W1,2,cumsum)[,3]/c(1:rep),col='blue')
+}
+
+
+
+```
+
+
+# preferentially latest forecast
+
+resample 
+
+```{r}
+weight_last <- rep(1,nrow(data))
+weight_last[which(data$period %in% max(data$period))] <- 1.5
+data <- cbind(data,weight_last)
+
+p_sample <- c(.1,.5,.9)
+
+rep <- 1e3
+
+W <- list(W1 = data.frame(matrix(0,rep,length(models))) )
+
+layout(matrix(1:4,2,2))
+
+for (i in 1:length(p_sample)){
+  for (k in 1:rep){
+    f <-sample(nrow(data),size = round(nrow(data)*p_sample[i]),replace = TRUE,prob = weight_last)
+    x <- apply(data[f,5+(1:length(models))],2,sum)/
+      apply(!is.na(data[f,5+(1:length(models))]),2,sum)
+    W$W1[k, which(x == min(x))] <- 1
+  }
+  # layout(matrix(1:4,2,2))
+  plot(apply(W$W1,2,cumsum)[,1]/c(1:rep),ylim=c(0,1),type='l',col='black',main=p_sample[i])
+  lines(apply(W$W1,2,cumsum)[,2]/c(1:rep),col='red')
+  lines(apply(W$W1,2,cumsum)[,3]/c(1:rep),col='blue')
+}
+
+
+
+```
+
+
+
+# preferentially ealry week
+
+resample 
+
+```{r}
+weight_last <- rep(1,nrow(data))
+weight_last[which(data$week_day %in% c(1,2,3))] <- 2
+data$weight_last <- weight_last
+
+p_sample <- c(.1,.5,.9)
+
+rep <- 1e3
+
+W <- list(W1 = data.frame(matrix(0,rep,length(models))) )
+
+layout(matrix(1:4,2,2))
+
+for (i in 1:length(p_sample)){
+  for (k in 1:rep){
+    f <-sample(nrow(data),size = round(nrow(data)*p_sample[i]),replace = TRUE,prob = weight_last)
+    x <- apply(data[f,5+(1:length(models))],2,sum)/
+      apply(!is.na(data[f,5+(1:length(models))]),2,sum)
+    W$W1[k, which(x == min(x))] <- 1
+  }
+  # layout(matrix(1:4,2,2))
+  plot(apply(W$W1,2,cumsum)[,1]/c(1:rep),ylim=c(0,1),type='l',col='black',main=p_sample[i])
+  lines(apply(W$W1,2,cumsum)[,2]/c(1:rep),col='red')
+  lines(apply(W$W1,2,cumsum)[,3]/c(1:rep),col='blue')
+}
+
+
+
+```
+
+
+
+
+# preferentially late week
+
+resample 
+
+```{r}
+weight_last <- rep(1,nrow(data))
+weight_last[which(data$week_day %in% c(5,6,7))] <- 2
+data$weight_last <- weight_last
+
+p_sample <- c(.1,.5,.9)
+
+rep <- 1e3
+
+W <- list(W1 = data.frame(matrix(0,rep,length(models))) )
+
+layout(matrix(1:4,2,2))
+
+for (i in 1:length(p_sample)){
+  for (k in 1:rep){
+    f <-sample(nrow(data),size = round(nrow(data)*p_sample[i]),replace = TRUE,prob = weight_last)
+    x <- apply(data[f,5+(1:length(models))],2,sum)/
+      apply(!is.na(data[f,5+(1:length(models))]),2,sum)
+    W$W1[k, which(x == min(x))] <- 1
+  }
+  # layout(matrix(1:4,2,2))
+  plot(apply(W$W1,2,cumsum)[,1]/c(1:rep),ylim=c(0,1),type='l',col='black',main=p_sample[i])
+  lines(apply(W$W1,2,cumsum)[,2]/c(1:rep),col='red')
+  lines(apply(W$W1,2,cumsum)[,3]/c(1:rep),col='blue')
+}
+
+
+
+```
+#
